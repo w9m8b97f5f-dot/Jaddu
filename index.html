@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classic Wake-Up Monitor</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- MediaPipe Face Mesh & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+    <style>
+        /* Classic / Vintage Theme CSS */
+        body {
+            background-color: #1c1917; /* Dark stone */
+            background-image: 
+                radial-gradient(circle at center, #292524 0%, #0c0a09 100%),
+                repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.05) 10px, rgba(0,0,0,0.05) 20px);
+            font-family: 'Georgia', serif;
+            color: #fef3c7;
+        }
+
+        .classic-border {
+            border: 4px solid #b45309; /* Antique Gold/Bronze */
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8), inset 0 0 10px rgba(0,0,0,0.5);
+            border-radius: 12px;
+            background: #1c1917;
+        }
+
+        .classic-text {
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            letter-spacing: 1px;
+        }
+
+        .btn-classic {
+            background: linear-gradient(to bottom, #d97706, #92400e);
+            border: 2px solid #fef3c7;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            transition: all 0.2s ease;
+        }
+
+        .btn-classic:hover {
+            background: linear-gradient(to bottom, #f59e0b, #b45309);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.6);
+        }
+
+        .btn-classic:active {
+            transform: translateY(1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+        /* 5x10 Ratio specific styling */
+        .camera-wrapper {
+            aspect-ratio: 5 / 10;
+            width: 100%;
+            max-width: 280px;
+            margin: 0 auto;
+        }
+
+        canvas {
+            transform: scaleX(-1); /* Mirror the camera feed naturally */
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* Crops beautifully to 5:10 without stretching the face */
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-4">
+
+    <div class="w-full flex flex-col items-center justify-center flex-grow">
+        <!-- Header -->
+        <div class="text-center mb-6">
+            <h1 class="text-3xl md:text-5xl font-bold text-amber-500 classic-text mb-2">The Vigilant Eye</h1>
+            <p class="text-amber-200 text-sm md:text-base italic max-w-lg mx-auto">
+                A classic instrument to ensure wakefulness. If thine eyes close for too long, the alarm shall sound.
+            </p>
+        </div>
+
+        <!-- Main Content Box -->
+        <div class="classic-border p-4 md:p-6 w-full max-w-2xl flex flex-col items-center relative">
+            
+            <!-- Error / Message Banner (Replaces native alert) -->
+            <div id="error_box" class="w-full mb-4 p-3 rounded-lg bg-red-950/90 border border-red-500 text-red-200 text-sm text-center hidden">
+                <span id="error_text"></span>
+            </div>
+
+            <!-- Camera Area (Forced 5:10 Ratio) -->
+            <div class="camera-wrapper relative rounded-lg overflow-hidden bg-black flex justify-center items-center shadow-inner border-2 border-amber-900">
+                <video id="webcam" class="hidden" autoplay playsinline></video>
+                
+                <!-- Internal canvas remains standard 640x480 resolution for accurate aspect-corrected math -->
+                <canvas id="output_canvas" width="640" height="480"></canvas>
+                
+                <!-- Eye Closure Progress Bar Overlay -->
+                <div class="absolute bottom-0 left-0 right-0 h-2 bg-stone-900/80 z-20">
+                    <div id="drowsy_progress" class="h-full bg-amber-500 transition-all duration-75 w-0"></div>
+                </div>
+
+                <!-- Loading overlay -->
+                <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-85 text-amber-500 z-10 hidden">
+                    <svg class="animate-spin h-10 w-10 mb-4 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p class="text-lg text-center px-2">Summoning<br>Camera...</p>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="mt-6 w-full flex flex-col items-center gap-4">
+                <button id="start_btn" class="btn-classic text-amber-50 font-bold py-3 px-8 rounded-lg w-full md:w-auto text-lg cursor-pointer">
+                    Begin Monitoring
+                </button>
+
+                <!-- Status Display -->
+                <div id="status_box" class="w-full text-center border-2 border-amber-800 bg-black bg-opacity-50 p-3 rounded-lg text-lg font-semibold tracking-wide hidden transition-colors duration-200">
+                    <span id="status_text" class="text-amber-200">Awaiting start command...</span>
+                </div>
+
+                <!-- Settings & Sensor Telemetry -->
+                <div id="settings_panel" class="w-full mt-2 hidden flex-col items-center gap-3 border-t border-amber-900/80 pt-4">
+                    
+                    <div class="w-full max-w-md flex flex-col gap-1">
+                        <label for="sensitivity" class="text-amber-200 text-sm flex justify-between w-full">
+                            <span>Eye Closure Threshold (EAR)</span>
+                            <span id="ear_val" class="font-mono font-bold text-amber-400">0.23</span>
+                        </label>
+                        <input type="range" id="sensitivity" min="0.14" max="0.34" step="0.01" value="0.23" class="w-full accent-amber-600 cursor-pointer">
+                    </div>
+
+                    <div class="w-full max-w-md flex flex-col gap-1 mt-1">
+                        <label for="delay_slider" class="text-amber-200 text-sm flex justify-between w-full">
+                            <span>Trigger Delay (Frames Closed)</span>
+                            <span id="delay_val" class="font-mono font-bold text-amber-400">8 frames</span>
+                        </label>
+                        <input type="range" id="delay_slider" min="3" max="25" step="1" value="8" class="w-full accent-amber-600 cursor-pointer">
+                    </div>
+
+                    <div class="flex flex-wrap justify-between items-center w-full max-w-md bg-stone-900/90 border border-amber-900/60 px-4 py-2.5 rounded-lg text-xs text-amber-300 mt-1">
+                        <div>
+                            Live Sensor EAR: <span id="live_ear" class="font-mono font-bold text-white text-sm">0.000</span>
+                        </div>
+                        <div>
+                            Eye State: <span id="eye_state_badge" class="font-bold uppercase px-2 py-0.5 rounded bg-stone-800 text-amber-400">Idle</span>
+                        </div>
+                    </div>
+
+                    <p class="text-xs text-amber-400/80 text-center max-w-md">
+                        Tip: Watch your <strong>Live Sensor EAR</strong> while open (~0.28–0.35) vs closed (~0.12–0.19), and set the threshold right in between.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="w-full text-center mt-8 pb-4">
+        <p class="text-amber-600/60 text-sm font-semibold tracking-widest uppercase">
+            Developed by WURLI
+        </p>
+    </footer>
+
+    <!-- Audio Element -->
+    <audio id="alarm_audio" preload="auto" loop>
+        <source src="uthja.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+        // --- HTML Elements ---
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const startBtn = document.getElementById('start_btn');
+        const loadingScreen = document.getElementById('loading');
+        const statusBox = document.getElementById('status_box');
+        const statusText = document.getElementById('status_text');
+        const errorBox = document.getElementById('error_box');
+        const errorText = document.getElementById('error_text');
+        const alarmAudio = document.getElementById('alarm_audio');
+        const sensitivitySlider = document.getElementById('sensitivity');
+        const earValDisplay = document.getElementById('ear_val');
+        const delaySlider = document.getElementById('delay_slider');
+        const delayValDisplay = document.getElementById('delay_val');
+        const liveEarDisplay = document.getElementById('live_ear');
+        const eyeStateBadge = document.getElementById('eye_state_badge');
+        const drowsyProgress = document.getElementById('drowsy_progress');
+        const settingsPanel = document.getElementById('settings_panel');
+
+        // --- Configuration & State ---
+        let EAR_THRESHOLD = 0.23;
+        let CONSECUTIVE_FRAMES = 8; // Reduced from 15 so it triggers while eyes are closed, not after opening
+        let closedFramesCount = 0;
+        let isSleeping = false;
+        let cameraRunning = false;
+
+        let audioCtx = null;
+        let beepInterval = null;
+        let customAudioFailed = false;
+
+        // Standard 6-point MediaPipe FaceMesh eye indices for reliable EAR calculation:
+        // Order: [Outer Corner, Inner Corner, Upper Lid 1, Lower Lid 1, Upper Lid 2, Lower Lid 2]
+        const LEFT_EYE_INDICES = [33, 133, 160, 144, 158, 153];
+        const RIGHT_EYE_INDICES = [362, 263, 385, 380, 387, 373];
+
+        function showMessage(msg) {
+            errorText.innerText = msg;
+            errorBox.classList.remove('hidden');
+        }
+
+        // --- Aspect-Corrected Pixel Distance ---
+        // MediaPipe landmarks are normalized [0, 1]. Multiplying by canvas width & height
+        // prevents aspect-ratio distortion when the head tilts or moves.
+        function calcPixelDistance(p1, p2, width, height) {
+            const dx = (p1.x - p2.x) * width;
+            const dy = (p1.y - p2.y) * height;
+            return Math.hypot(dx, dy);
+        }
+
+        // --- 6-Point Eye Aspect Ratio (EAR) ---
+        function calculateEAR(landmarks, indices, width, height) {
+            const pCorner1 = landmarks[indices[0]];
+            const pCorner2 = landmarks[indices[1]];
+            const pTop1    = landmarks[indices[2]];
+            const pBottom1 = landmarks[indices[3]];
+            const pTop2    = landmarks[indices[4]];
+            const pBottom2 = landmarks[indices[5]];
+
+            const verticalDist1 = calcPixelDistance(pTop1, pBottom1, width, height);
+            const verticalDist2 = calcPixelDistance(pTop2, pBottom2, width, height);
+            const horizontalDist = calcPixelDistance(pCorner1, pCorner2, width, height);
+
+            if (horizontalDist === 0) return 0;
+            return (verticalDist1 + verticalDist2) / (2.0 * horizontalDist);
+        }
+
+        // --- Audio Management ---
+        function playAlarm() {
+            if (isSleeping) return;
+            isSleeping = true;
+
+            statusBox.style.borderColor = "#ef4444";
+            statusText.innerText = "WARNING: EYES CLOSED! WAKE UP!";
+            statusText.className = "text-red-500 font-bold animate-pulse text-xl md:text-2xl";
+
+            if (customAudioFailed) {
+                startFallbackBeep();
+                return;
+            }
+
+            alarmAudio.currentTime = 0;
+            const playPromise = alarmAudio.play();
+
+            if (playPromise !== undefined) {
+                playPromise
+                    .then(() => {
+                        // CRITICAL FIX: If the user opened their eyes while the audio was loading/decoding,
+                        // immediately pause it so it never plays after eyes are already open!
+                        if (!isSleeping) {
+                            alarmAudio.pause();
+                            alarmAudio.currentTime = 0;
+                        }
+                    })
+                    .catch(error => {
+                        console.warn("Could not play uthja.mp3, using instant WebAudio alarm:", error);
+                        customAudioFailed = true;
+                        // Only trigger the fallback beep if eyes are STILL closed right now
+                        if (isSleeping) {
+                            startFallbackBeep();
+                        }
+                    });
+            }
+        }
+
+        function stopAlarm() {
+            // Always reset frame counter immediately when eyes open
+            closedFramesCount = 0;
+            drowsyProgress.style.width = '0%';
+
+            if (!isSleeping) return;
+            isSleeping = false;
+
+            statusBox.style.borderColor = "#059669";
+            statusText.innerText = "Eyes Open. Monitoring gracefully...";
+            statusText.className = "text-emerald-400";
+
+            try {
+                alarmAudio.pause();
+                alarmAudio.currentTime = 0;
+            } catch (e) {
+                // Ignore audio pause errors
+            }
+            stopFallbackBeep();
+        }
+
+        function playSingleBeep() {
+            if (!isSleeping) return;
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5 tone
+                gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.16);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.16);
+            } catch (e) {
+                console.error("WebAudio error:", e);
+            }
+        }
+
+        function startFallbackBeep() {
+            if (!isSleeping) return;
+            // Play the first beep immediately without waiting 250ms
+            playSingleBeep();
+            if (!beepInterval) {
+                beepInterval = setInterval(() => {
+                    if (!isSleeping) {
+                        stopFallbackBeep();
+                        return;
+                    }
+                    playSingleBeep();
+                }, 240);
+            }
+        }
+
+        function stopFallbackBeep() {
+            if (beepInterval) {
+                clearInterval(beepInterval);
+                beepInterval = null;
+            }
+        }
+
+        // --- MediaPipe Processing ---
+        function onResults(results) {
+            if (loadingScreen.classList.contains('flex')) {
+                loadingScreen.classList.replace('flex', 'hidden');
+                statusBox.classList.remove('hidden');
+                settingsPanel.classList.remove('hidden');
+                settingsPanel.classList.add('flex');
+                statusBox.style.borderColor = "#059669";
+                statusText.innerText = "Subject acquired. Monitoring...";
+                statusText.className = "text-emerald-400";
+            }
+
+            const width = canvasElement.width;
+            const height = canvasElement.height;
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, width, height);
+            canvasCtx.drawImage(results.image, 0, 0, width, height);
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+
+                const leftEAR = calculateEAR(landmarks, LEFT_EYE_INDICES, width, height);
+                const rightEAR = calculateEAR(landmarks, RIGHT_EYE_INDICES, width, height);
+                const avgEAR = (leftEAR + rightEAR) / 2.0;
+
+                liveEarDisplay.innerText = avgEAR.toFixed(3);
+
+                // Check if eyes are closed (EAR drops below threshold)
+                const eyesCurrentlyClosed = avgEAR < EAR_THRESHOLD;
+
+                if (eyesCurrentlyClosed) {
+                    closedFramesCount = Math.min(CONSECUTIVE_FRAMES, closedFramesCount + 1);
+                    eyeStateBadge.innerText = "Closed";
+                    eyeStateBadge.className = "font-bold uppercase px-2 py-0.5 rounded bg-red-950 text-red-400 border border-red-700";
+
+                    const progressPct = Math.min(100, (closedFramesCount / CONSECUTIVE_FRAMES) * 100);
+                    drowsyProgress.style.width = `${progressPct}%`;
+                    drowsyProgress.className = progressPct >= 100
+                        ? "h-full bg-red-500 transition-all duration-75"
+                        : "h-full bg-amber-500 transition-all duration-75";
+
+                    if (closedFramesCount >= CONSECUTIVE_FRAMES) {
+                        playAlarm();
+                    }
+                } else {
+                    // Eyes are OPEN -> Immediately stop any alarm and reset count to 0
+                    eyeStateBadge.innerText = "Open";
+                    eyeStateBadge.className = "font-bold uppercase px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-700";
+                    stopAlarm();
+                }
+
+                // Draw eye landmarks
+                canvasCtx.fillStyle = isSleeping ? '#ef4444' : (eyesCurrentlyClosed ? '#f59e0b' : '#10b981');
+                const allEyeIndices = [...LEFT_EYE_INDICES, ...RIGHT_EYE_INDICES];
+
+                allEyeIndices.forEach(idx => {
+                    const point = landmarks[idx];
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(point.x * width, point.y * height, 2.5, 0, 2 * Math.PI);
+                    canvasCtx.fill();
+                });
+
+            } else {
+                liveEarDisplay.innerText = "---";
+                eyeStateBadge.innerText = "No Face";
+                eyeStateBadge.className = "font-bold uppercase px-2 py-0.5 rounded bg-stone-800 text-amber-400";
+                if (!isSleeping) {
+                    statusText.innerText = "No face detected in frame...";
+                    statusText.className = "text-amber-500";
+                    statusBox.style.borderColor = "#f59e0b";
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        const faceMesh = new FaceMesh({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+        }});
+
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults(onResults);
+
+        // --- User Interaction & Controls ---
+        sensitivitySlider.addEventListener('input', (e) => {
+            EAR_THRESHOLD = parseFloat(e.target.value);
+            earValDisplay.innerText = EAR_THRESHOLD.toFixed(2);
+        });
+
+        delaySlider.addEventListener('input', (e) => {
+            CONSECUTIVE_FRAMES = parseInt(e.target.value, 10);
+            delayValDisplay
